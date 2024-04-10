@@ -1,0 +1,157 @@
+---
+MC31title: "MC311 Draft"
+author: "Ibrahim Pinzon Perez"
+date: "2024-02-14"
+output: html_document
+---
+
+## Loading Necessary Packages
+
+```{r, message = FALSE}
+library(tidyverse)
+```
+
+
+## Reading in the Data
+
+```{r, message = FALSE}
+MC311 <- read_csv("MC311_SR.csv")
+```
+
+##Gsub
+
+```{r}
+# Eliminating spaces and hyphens and renaming Attached Solution Topic
+colnames(MC311) <- gsub(" ", "_", colnames(MC311))
+colnames(MC311) <- gsub("-", "", colnames(MC311))
+
+MC311 <- MC311 %>%
+  rename(AST = `Attached_Solution_(Topic)`)
+```
+
+## Adjusting Date Column & Adding other Time Info
+
+```{r}
+MC311$Opened <- as.POSIXct(MC311$Opened, format = "%m/%d/%Y %I:%M:%S %p")
+
+MC311$Opened <- as.Date(MC311$Opened, format = "%m/%d/%Y %I:%M:%S %p")
+
+MC311 <- MC311 %>% mutate(Month = as.numeric(format(Opened, "%m"))) # Adding "Month" column
+
+MC311 <- MC311 %>% mutate(Year = as.numeric(format(Opened, "%Y"))) # Adding "Year" column
+```
+
+## Supplementing NAs
+
+```{r}
+# Moving information from one column to another to supplement NAs instead of dropping them
+MC311 <- MC311 %>% 
+  mutate(Area = ifelse(is.na(Area), Department, Area),
+         SubArea = ifelse(is.na(SubArea), Department, SubArea),
+         AST = ifelse(is.na(AST), Department, AST)) 
+```
+
+## Aggregating Data for Phone Calls
+
+```{r message= FALSE}
+ASTPhoneCounts <- MC311 %>%
+  filter(Source == "Phone") %>% # Grouping AST (Attached Solution Topic)
+  group_by(AST) %>%
+  summarize(count = n()) 
+
+ASTPhoneCounts <- ASTPhoneCounts %>%
+  filter(count >= 3650)
+
+TOPASTs <- unique(ASTPhoneCounts$AST) # selecting top ASTs (Attached Solution Topic)
+
+MC311TopCalls <- MC311 %>%
+  filter(Source == "Phone") %>% # Filtering for only those ASTs ^
+  filter(AST %in% TOPASTs)
+
+AST_MY <- MC311TopCalls %>% # Grouping ASTs by month and year, hence 'MY'
+  group_by(AST, Year) %>% 
+  summarise(count = n()) 
+```
+
+## Change in Call Volume for Top Phone Calls
+
+```{r}
+Calls_2019 <- AST_MY %>% 
+  filter(Year == 2019) %>%
+  group_by(AST) %>% 
+  summarize(Count2019 = sum(count))
+
+AST_MY <- left_join(AST_MY, Calls_2019, by = "AST")
+
+AST_MY <- AST_MY %>% 
+  mutate(Count2019 = replace(Count2019, is.na(Count2019), 0),
+         Change = ((count - Count2019) / Count2019) * 100)
+
+AST_MY <- AST_MY %>% 
+  mutate(Change = round(Change, 2))
+```
+
+## Solution Topics of Interest (Phone)
+
+```{r}
+Int_PhoneAST <- c() 
+```
+
+
+## Aggregating Data for Web Requests
+
+```{r message = FALSE}
+ASTWebRequests <- MC311 %>%
+  filter(Source == "Web") %>% # Grouping AST (Attached Solution Topic)
+  group_by(AST) %>%
+  summarize(count = n()) 
+
+ASTWebRequests<- ASTWebRequests %>%
+  filter(count >= 1000)
+
+TOPASTs_Web <- unique(ASTWebRequests$AST) # selecting top ASTs (Attached Solution Topic)
+
+MC311TopWR <- MC311 %>% 
+  filter(Source == "Web") %>% # Filtering for only those ASTs ^
+  filter(AST %in% TOPASTs_Web)
+
+ASTWeb_MY <- MC311TopWR %>% # Grouping ASTs by month and year, hence 'MY'
+  group_by(AST, Year) %>% 
+  summarise(count = n()) 
+```
+
+
+### Change in Web Service Requests (Top Requests)
+
+```{r}
+Web_2019 <- ASTWeb_MY %>% 
+  filter(Year == 2019) %>%
+  group_by(AST) %>% 
+  summarize(Count2019 = sum(count))
+
+ASTWeb_MY <- left_join(ASTWeb_MY, Web_2019, by = "AST")
+
+ASTWeb_MY <- ASTWeb_MY %>% 
+  mutate(Count2019 = replace(Count2019, is.na(Count2019), 0),
+         Change = ((count - Count2019) / Count2019) * 100)
+
+ASTWeb_MY <- ASTWeb_MY %>% 
+  mutate(Change = round(Change, 2))
+```
+
+## Solution Topics of Interest (Web)
+
+```{r}
+Int_WebAST <- c()
+```
+
+
+### Visualization 
+
+```{r}
+
+```
+
+
+
+
