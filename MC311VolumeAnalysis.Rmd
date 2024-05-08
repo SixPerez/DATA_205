@@ -1,0 +1,428 @@
+---
+MC31title: Montgomery County 311 Phone Service Requests Volume Analysis
+author: "Ibrahim Pinzon Perez"
+date: "2024-02-14"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Loading Necessary Packages
+
+```{r, message = FALSE}
+library(tidyverse)
+```
+
+
+## Reading in the Data
+
+```{r, message = FALSE}
+MC311 <- read_csv("MC311_SR.csv")
+```
+
+##Gsub
+
+```{r}
+# Eliminating spaces and hyphens and renaming Attached Solution Topic
+colnames(MC311) <- gsub(" ", "_", colnames(MC311))
+colnames(MC311) <- gsub("-", "", colnames(MC311))
+
+MC311 <- MC311 %>%
+  rename(AST = `Attached_Solution_(Topic)`)
+```
+
+## Adjusting Date Column & Adding other Time Info
+
+```{r}
+MC311$Opened <- as.POSIXct(MC311$Opened, format = "%m/%d/%Y %I:%M:%S %p")
+
+MC311$Opened <- as.Date(MC311$Opened, format = "%m/%d/%Y %I:%M:%S %p")
+
+MC311 <- MC311 %>% mutate(Month = as.numeric(format(Opened, "%m"))) # Adding "Month" column
+
+MC311 <- MC311 %>% mutate(Year = as.numeric(format(Opened, "%Y"))) # Adding "Year" column
+```
+
+## Supplementing NAs
+
+```{r}
+# Moving information from one column to another to supplement NAs instead of dropping them
+MC311 <- MC311 %>% 
+  mutate(Area = ifelse(is.na(Area), Department, Area),
+         SubArea = ifelse(is.na(SubArea), Department, SubArea),
+         AST = ifelse(is.na(AST), Department, AST)) 
+```
+
+## Macroanalysis of Call Volume by Year and Department 
+
+```{r}
+MC311 %>% filter(Department %in%c("DOT", "DPS", "Non-MCG") & Source == "Phone") %>%
+  group_by(Department, Year) %>%
+  summarize(count = n())
+```
+
+
+## Aggregating Data for Phone Calls
+
+```{r message= FALSE}
+ASTPhoneCounts <- MC311 %>%
+  filter(Source == "Phone") %>% # Grouping AST (Attached Solution Topic)
+  group_by(AST) %>%
+  summarize(count = n()) 
+
+ASTPhoneCounts <- ASTPhoneCounts %>%
+  filter(count >= 3650)
+
+TOPASTs <- unique(ASTPhoneCounts$AST) # selecting top ASTs (Attached Solution Topic)
+
+MC311TopCalls <- MC311 %>%
+  filter(Source == "Phone") %>% # Filtering for only those ASTs ^
+  filter(AST %in% TOPASTs)
+
+AST_MY <- MC311TopCalls %>% # Grouping ASTs by month and year, hence 'MY'
+  group_by(Department, AST, Year) %>% 
+  summarise(count = n()) 
+```
+
+### Change in Call Volume for Top Phone Calls
+
+```{r}
+Calls_2019 <- AST_MY %>% 
+  filter(Year == 2019) %>%
+  group_by(AST) %>% 
+  summarize(Count2019 = sum(count))
+
+AST_MY <- left_join(AST_MY, Calls_2019, by = "AST")
+
+AST_MY <- AST_MY %>% 
+  mutate(Count2019 = replace(Count2019, is.na(Count2019), 0),
+         Change = ((count - Count2019) / Count2019) * 100)
+
+AST_MY <- AST_MY %>% 
+  mutate(Change = round(Change, 2))
+```
+
+#### Solution Topics of Interest (Phone)
+
+```{r}
+ASTPhoneRows <- c(24:28, 86:90, 99:103, 123:132, 140:144, 166:170, 182:186, 206:210, 231:233, 246:250,
+                  266:269, 274:278, 325:329, 369:373, 420:424, 425:429)
+
+ASTPhoneY_Final <- AST_MY[ASTPhoneRows, ]
+```
+
+### Visualization (Phone Requests) HEATMAP
+
+```{r, message = FALSE}
+library(plotly)
+```
+
+```{r}
+PhoneHeatmap <- plot_ly(data = ASTPhoneY_Final, x = ~Year, y = ~AST, z = ~Change, type = "heatmap", colors = colorRamp(c("red", "white", "#228B22")), 
+        text = ~paste("Attached Solution (Topic): ", AST, "<br>Year: ", Year, "<br>Percent Change: ", Change, "<br>Corresponding Department: ", Department), hoverinfo = "text") %>%
+  layout(title = "Percent Change of Call Volume for Attached Solution (Topics) of MC311 Phone Requests from 2019 to 2023",
+         xaxis = list(title = "Year"),
+         yaxis = list(title = "Attached Solution (Topic)"),
+         showlegend = TRUE)
+
+PhoneHeatmap
+```
+
+```{r}
+htmlwidgets::saveWidget(PhoneHeatmap, "PhoneRequestsHeatmap.html")
+```
+
+## New Insights
+
+### Department of Transportation (DOT) 
+
+```{r}
+ASTDOT <- AST_MY %>%
+  filter(AST %in% c("Ride On Complaint - Driver Behavior", "Ride On Complaint - Service", "Ride On Trip Planning"))
+
+DOTplot <- ggplot(ASTDOT, aes(x = Year, y = count, color = AST)) +
+  geom_line() + 
+  labs(x = "Year",
+       y = "Number of Phone Service Requests",
+       color = "Solution Topic",
+       title = "Total Number of 311 Phone Service Requests for MCDOT by Year and Solution Topic") +
+  scale_y_continuous(breaks = seq(0, 6500, by = 500)) +
+  theme(panel.grid.major.x = element_line(color = "black", linetype = "dotted"))
+
+DOTplot
+```
+
+
+```{r}
+ggsave("DOT.png", plot = DOTplot, width = 10)
+```
+
+
+```{r}
+DOTCalls <- MC311 %>% filter(Source == "Phone" & Department == "DOT") %>%
+  group_by(Year) %>% 
+  summarize(count = n())
+
+ggplot(DOTCalls, aes(x = Year, y = count, fill = Year)) +
+  geom_bar(stat = "Identity", fill = "#4682B4") +
+  labs(y = "Number of Phone Service Requests",
+       title = "Total Number of 311 Phone Service Requests for MCDOT by Year") +
+  scale_y_continuous(breaks = seq(0, 70000, by = 5000)) +
+  geom_text(aes(label = count), vjust = -0.5, color = "black", size = 3) +
+  theme_minimal()
+```
+
+### Non-MCG
+
+```{r}
+ASTNonMCG <- AST_MY %>%
+  filter(AST %in% c("Land Records", "Washington DC 311", "Washington Suburban Sanitary Commission (WSSC)"))
+
+NONMCGPlot <- ggplot(ASTNonMCG, aes(x = Year, y = count, color = AST)) +
+  geom_line() + 
+  labs(x = "Year",
+       y = "Number of Phone Service Requests",
+       color = "Solution Topic",
+       title = "Total Number of Non-MCG 311 Phone Service Requests by Year and Solution Topic") +
+  scale_y_continuous(breaks = seq(0, 6500, by = 500)) +
+  theme(panel.grid.major.x = element_line(color = "black", linetype = "dotted"))
+
+NONMCGPlot
+```
+
+```{r}
+NONMCGCALLS <- MC311 %>% filter(Source == "Phone" & Department == "Non-MCG") %>%
+  group_by(Year) %>% 
+  summarize(count = n())
+
+ggplot(NONMCGCALLS, aes(x = Year, y = count, fill = Year)) +
+  geom_bar(stat = "Identity", fill = "#4682B4") +
+  labs(y = "Number of Phone Service Requests",
+       title = "Total Number of Non-MCG 311 Phone Service Requests by Year") +
+  scale_y_continuous(breaks = seq(0, 70000, by = 5000)) +
+  geom_text(aes(label = count), vjust = -0.5, color = "black", size = 3) +
+  theme_minimal()
+```
+
+
+```{r}
+ggsave("ASTNon-MCG.png", plot = NONMCGPlot, width = 12)
+```
+
+
+### DPS
+
+```{r}
+ASTDPS <- AST_MY %>%
+  filter(AST %in% c("Schedule DPS Commercial Building Construction Related Permitting Inspections", 
+                    "Renew or Apply for Fire Code Compliance, Operational, or General Fire Permits",
+                    "Fire Code Compliance Inspection Request"))
+
+ASTDPS <- ggplot(ASTDPS, aes(x = Year, y = count, color = AST)) +
+  geom_line() + 
+  labs(x = "Year",
+       y = "Number of Phone Service Requests",
+       color = "Solution Topic",
+       title = "Total Number of Montgomery County DPS 311 Phone Service Requests by Year and Solution Topic") +
+  scale_y_continuous(breaks = seq(0, 6500, by = 500)) +
+  theme(panel.grid.major.x = element_line(color = "black", linetype = "dotted"))
+
+ASTDPS
+```
+
+```{r}
+ggsave("ASTDPS.png", plot = ASTDPS, width = 12)
+```
+
+```{r}
+DPSCalls <- MC311 %>% filter(Source == "Phone" & Department == "DPS") %>%
+  group_by(Year) %>% 
+  summarize(count = n())
+
+ggplot(DPSCalls, aes(x = Year, y = count, fill = Year)) +
+  geom_bar(stat = "Identity", fill = "#4682B4") +
+  labs(y = "Number of Phone Service Requests",
+       title = "Total Number of Montgomery County DPS 311 Phone Service Requests by Year") +
+  scale_y_continuous(breaks = seq(0, 75000, by = 5000)) +
+  geom_text(aes(label = count), vjust = -0.5, color = "black", size = 3) +
+  theme_minimal()
+```
+
+## Forecasting Call Volume Using Facebook's Prophet
+
+```{r, message=FALSE}
+library(prophet)
+library(dygraphs)
+```
+
+### DOT 
+
+```{r}
+DOT311 <- MC311 %>% filter(Source == "Phone" & Department == "DOT") %>%
+  group_by(Opened) %>%
+  summarize(count = n())
+
+colnames(DOT311) <- c("ds", "y")
+
+DOTPModel <- prophet(DOT311)
+
+DOTfuture <- make_future_dataframe(DOTPModel, periods = 365)
+DOTforecast <- predict(DOTPModel, DOTfuture)
+
+plot(DOTPModel, DOTforecast,
+     xlab = "Year",
+     ylab = "Number of 311 Phone Service Requests",
+     main = "Prophet Forecast for MCDOT 311 Phone Service Requests")
+
+```
+
+
+### DOT Forecast
+
+```{r}
+DOT2024 <- DOTforecast %>% filter(ds >= as.Date("2024-01-01"))
+
+ggplot(DOT2024, aes(x = ds)) +
+  geom_line(aes(y = yhat_lower), color = "red") +
+  geom_line(aes(y = yhat_upper), color = "blue")+
+  geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper)) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(panel.grid.major.x = element_line(color = "black", linetype = "dotted")) +
+  labs(x = "Date",
+       y = "Number of Predicted MCDOT 311 Phone Service Requests",
+       title = "2024 Prophet Forecast for DOT 311 Service Requests") +
+  scale_color_manual(name = "Bounds", values = c("Lower Bound" = "red", "Upper Bound" = "blue")) +
+  guides(fill = guide_legend(title = "95% Confidence Interval")) +
+   scale_y_continuous(breaks = seq(-150, 350, by = 25))
+```
+
+### DOT Bootstrapping
+
+```{r}
+library(infer)
+
+DOTCI <- DOTforecast %>% 
+  specify(response = yhat_lower) %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "mean") %>%
+  summarize(l = quantile(stat, 0.025),
+            u = quantile(stat, 0.975))
+
+DOTCI
+```
+
+
+### Non-MCG
+
+```{r}
+NonMCG311 <- MC311 %>% filter(Source == "Phone" & Department == "Non-MCG") %>%
+  group_by(Opened) %>%
+  summarize(count = n())
+
+colnames(NonMCG311) <- c("ds", "y")
+
+NMCGMod <- prophet(NonMCG311)
+
+NMCGfuture <- make_future_dataframe(NMCGMod, periods = 365)
+NMCGforecast <- predict(NMCGMod, NMCGfuture)
+
+plot(NMCGMod, NMCGforecast,
+     xlab = "Year",
+     ylab = "Number of 311 Phone Service Requests",
+     main = "Prophet Forecast for Non-MCG 311 Phone Service Requests")
+```
+
+### Non-MCG Forecast
+
+```{r}
+NMCG2024 <- NMCGforecast %>% filter(ds >= as.Date("2024-01-01"))
+
+NMCG2024Plot <- ggplot(NMCG2024, aes(x = ds)) +
+  geom_line(aes(y = yhat_lower), color = "red") +
+  geom_line(aes(y = yhat_upper), color = "blue")+
+  geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper)) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(panel.grid.major.x = element_line(color = "black", linetype = "dotted")) +
+  labs(x = "Date",
+       y = "Number of Predicted Non-MCG 311 Phone Service Requests",
+       title = "2024 Prophet Forecast for Non-MCG 311 Service Requests") +
+  scale_color_manual(name = "Bounds", values = c("Lower Bound" = "red", "Upper Bound" = "blue")) +
+  guides(fill = guide_legend(title = "95% Confidence Interval")) +
+   scale_y_continuous(breaks = seq(-150, 350, by = 25))
+
+NMCG2024Plot
+```
+
+```{r}
+ggsave("NMCG2024.png", plot = NMCG2024Plot, height = 5)
+```
+
+### Non-MCG Bootstrapping 
+
+```{r}
+NMCGCI <- NMCGforecast %>% 
+  specify(response = yhat_lower) %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "mean") %>%
+  summarize(l = quantile(stat, 0.025),
+            u = quantile(stat, 0.975))
+
+NMCGCI
+```
+
+### DPS 
+
+```{r}
+DPS311 <- MC311 %>% filter(Source == "Phone" & Department == "DPS") %>%
+  group_by(Opened) %>%
+  summarize(count = n())
+
+colnames(DPS311) <- c("ds", "y")
+
+DPSMod <- prophet(DPS311)
+
+DPSfuture <- make_future_dataframe(DPSMod, periods = 365)
+DPSforecast <- predict(DPSMod, NMCGfuture)
+
+plot(DPSMod, DPSforecast,
+     xlab = "Year",
+     ylab = "Number of 311 Phone Service Requests",
+     main = "Prophet Forecast for DPS 311 Phone Service Requests")
+```
+
+### DPS Forecast 
+
+```{r}
+DPS2024 <- DPSforecast %>% filter(ds >= as.Date("2024-01-01"))
+
+DPS2024Plot <- ggplot(DPS2024, aes(x = ds)) +
+  geom_line(aes(y = yhat_lower), color = "red") +
+  geom_line(aes(y = yhat_upper), color = "blue")+
+  geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper)) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(panel.grid.major.x = element_line(color = "black", linetype = "dotted")) +
+  labs(x = "Date",
+       y = "Number of Predicted DPS 311 Phone Service Requests",
+       title = "2024 Prophet Forecast for DPS 311 Service Requests") +
+  scale_color_manual(name = "Bounds", values = c("Lower Bound" = "red", "Upper Bound" = "blue")) +
+  guides(fill = guide_legend(title = "95% Confidence Interval")) +
+   scale_y_continuous(breaks = seq(-150, 350, by = 25))
+
+DPS2024Plot
+```
+### DPS Bootstrapping
+
+```{r}
+DPSCI <- DPSforecast %>% 
+  specify(response = yhat_lower) %>%
+  generate(reps = 10000, type = "bootstrap") %>%
+  calculate(stat = "mean") %>%
+  summarize(l = quantile(stat, 0.025),
+            u = quantile(stat, 0.975))
+
+DPSCI
+```
+
